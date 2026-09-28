@@ -17,8 +17,9 @@ import (
 
 // TYPES
 type Command struct {
-	name string
-	args []string
+	name     string
+	args     []string
+	raw_args string
 }
 
 // handling tables
@@ -26,6 +27,7 @@ type text_command_handler func(http.ResponseWriter, *http.Request, *schemes.Mess
 
 var text_command_table = map[string]text_command_handler{
 	"echo": handle_echo,
+	// create soon
 }
 
 func main() {
@@ -120,15 +122,11 @@ func parse_command(text string) (*Command, error) {
 
 	comm := strings.TrimPrefix(parts[0], "/")
 
+	_, raw_args, _ := strings.Cut(text, " ")
+
 	return &Command{
-		name: comm,
-		args: parts[1:],
+		name:     comm,
+		args:     parts[1:],
+		raw_args: raw_args,
 	}, nil
-}
-
-func handle_echo(resw http.ResponseWriter, req *http.Request, msg *schemes.Message) {
-	resw.WriteHeader(http.StatusOK)
-
-	comm, _ := parse_command(msg.Body.Text)
-	resw.Write([]byte(strings.Join(comm.args, " ")))
 }
