@@ -3,8 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"flag"
-	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -15,67 +14,61 @@ import (
 	schemes "github.com/max-messenger/max-bot-api-client-go/schemes"
 )
 
-// TYPES
 type Command struct {
-	name     string
+	command  string
 	args     []string
 	raw_args string
 }
 
-// handling tables
-type text_command_handler func(http.ResponseWriter, *http.Request, *schemes.Message)
+type message_com_handler func(resw http.ResponseWriter, req *http.Request, msg *schemes.Message)
 
-var text_command_table = map[string]text_command_handler{
-	"echo": handle_echo,
-	// create soon
+var MESSAGE_COMMAND = map[string]message_com_handler{
+	"echo":   handle_echo,
+	"create": handle_create,
 }
 
 func main() {
-
-	flag.Parse()
-
-	text_command_table := map[string]text_command_handler{
-		"echo": handle_echo,
-	}
-
 	http.HandleFunc("/webhook", func(resw http.ResponseWriter, req *http.Request) {
-		// At this moment we can parse only post requests
+
 		if req.Method != http.MethodPost {
 			resw.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
 
-		// Searching for method
-
-		var msg schemes.MessageCreatedUpdate // from that type we need only UpdateType
-
-		if json.NewDecoder(req.Body).Decode(&msg) != nil {
+		req_body, err := io.ReadAll(req.Body)
+		if err != nil {
 			resw.WriteHeader(http.StatusBadRequest)
-			resw.Write([]byte("Invalid message"))
 			return
 		}
 
-		// Parings received method
-		switch msg.UpdateType {
+		var upd schemes.Update
+
+		if json.Unmarshal(req_body, &upd) != nil {
+			resw.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		switch upd.UpdateType {
 		case schemes.TypeMessageCreated:
 			{
-				// MessageCreated can be used only for text command as analog for callback
-				// Command parsing
-				raw_text := msg.Message.Body.Text
+				var msg schemes.MessageCreatedUpdate
 
-				log.Printf("< %v\n", raw_text)
-
-				comm, err := parse_command(raw_text)
-
-				if err != nil {
+				if json.Unmarshal(req_body, &msg) != nil {
 					resw.WriteHeader(http.StatusBadRequest)
-					resw.Write([]byte("Command expected"))
 					return
 				}
 
-				// Handling command
+				log.Printf("< %s/n", msg.Message.Body.Text)
 
-				command_handler := text_command_table[comm.name]
+				command, err := parse_command(msg.Message.Body.Text)
+
+				if err != nil {
+					resw.WriteHeader(http.StatusBadRequest)
+					resw.Write([]byte(err.Error()))
+					return
+				}
+
+				command_handler := MESSAGE_COMMAND[command.command]
 				if command_handler == nil {
 					resw.WriteHeader(http.StatusNotImplemented)
 					resw.Write([]byte("Not implemented command"))
@@ -86,12 +79,6 @@ func main() {
 
 				return
 			}
-		default:
-			{
-				resw.WriteHeader(http.StatusNotImplemented)
-				resw.Write([]byte("Not implemented update type"))
-				return
-			}
 		}
 	})
 
@@ -99,33 +86,32 @@ func main() {
 		log.Fatal(http.ListenAndServe(":60001", nil))
 	}()
 
-	// Exit endpoint
 	exit := make(chan os.Signal, 1)
 
-	signal.Notify(exit, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(exit, syscall.SIGTERM, os.Interrupt)
 
 	<-exit
 
-	fmt.Print("\nExiting...\n")
+	log.Print("Received exit signal. Exiting...")
 }
 
-func parse_command(text string) (*Command, error) {
-	if len(text) == 0 {
-		return nil, errors.New("Empty command")
+func parse_command(data string) (*Command, error) {
+	if len(data) == 0 {
+		return nil, errors.New("No data")
 	}
 
-	if text[0] != '/' {
+	if data[0] != '/' {
 		return nil, errors.New("Not a command")
 	}
 
-	parts := strings.Fields(text)
+	data = data[1:]
 
-	comm := strings.TrimPrefix(parts[0], "/")
+	_, raw_args, _ := strings.Cut(data, " ")
 
-	_, raw_args, _ := strings.Cut(text, " ")
+	parts := strings.Fields(data)
 
 	return &Command{
-		name:     comm,
+		command:  parts[0],
 		args:     parts[1:],
 		raw_args: raw_args,
 	}, nil
