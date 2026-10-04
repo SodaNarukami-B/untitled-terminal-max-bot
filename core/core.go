@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -63,15 +64,14 @@ func main() {
 				command, err := parse_command(msg.Message.Body.Text)
 
 				if err != nil {
-					resw.WriteHeader(http.StatusBadRequest)
-					resw.Write([]byte(err.Error()))
+					http.Error(resw, "Invalid command", http.StatusBadRequest)
 					return
 				}
 
 				command_handler := MESSAGE_COMMAND[command.command]
 				if command_handler == nil {
-					resw.WriteHeader(http.StatusNotImplemented)
-					resw.Write([]byte("Not implemented command"))
+					http.Error(resw, "Not implemented command", http.StatusNotImplemented)
+
 					return
 				}
 
@@ -92,6 +92,7 @@ func main() {
 
 	<-exit
 
+	fmt.Printf("\r")
 	log.Print("Received exit signal. Exiting...")
 }
 

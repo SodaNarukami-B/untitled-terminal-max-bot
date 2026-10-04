@@ -7,32 +7,132 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"net/url"
 	"time"
 
 	schemes "github.com/max-messenger/max-bot-api-client-go/schemes"
 )
 
+type Attachment struct {
+	T        string `json:"type"`
+	Url      string `json:"url"`
+	Filename string `json:"filename"`
+}
+
 type CreateMessage struct {
-	User        schemes.User      `json:"user"`
-	Attachments []json.RawMessage `json:"attachments"`
-	Timestamp   int64             `json:"timestamp"`
+	User        schemes.User `json:"user"`
+	Attachments []Attachment `json:"attachments"`
+	Timestamp   int64        `json:"timestamp"`
+}
+
+var TYPE_HANDLERS = map[string]func(string){
+	"file": func(t string) {},
 }
 
 func handle_create(resw http.ResponseWriter, req *http.Request, msg *schemes.Message) {
+
 	var create_message CreateMessage
 
+	// user
 	create_message.User = msg.Sender
-	create_message.Attachments = msg.Body.RawAttachments
+
+	// attachments
+	for _, rawItem := range msg.Body.RawAttachments {
+		var Item map[string]any
+
+		err := json.Unmarshal(rawItem, &Item)
+
+		if err != nil {
+			http.Error(resw, "Invalid attachment", http.StatusBadRequest)
+			return
+		}
+
+		attachment_type, exists := Item["type"].(string)
+		if !exists {
+			http.Error(resw, "Invalid attachment", http.StatusBadRequest)
+			return
+		}
+
+		payload, exists := Item["payload"].(map[string]any)
+		if !exists {
+			http.Error(resw, "Invalid attachment", http.StatusBadRequest)
+			return
+		}
+
+		// URL
+		// 1
+		host, exists := payload["host"].(string)
+		if !exists {
+			http.Error(resw, "Invalid attachment", http.StatusBadRequest)
+			return
+		}
+
+		// 2
+		token, exists := payload["token"].(string)
+		if !exists {
+			http.Error(resw, "Invalid attachment", http.StatusBadRequest)
+			return
+		}
+
+		// 1 + 2
+
+		url, err := url.JoinPath(host, token)
+		if err != nil {
+			http.Error(resw, "Invalid source", http.StatusBadRequest)
+			return
+		}
+
+		switch schemes.AttachmentType(attachment_type) {
+		case schemes.AttachmentFile:
+			{
+				filename, exists := Item["filename"].(string)
+				if !exists {
+					http.Error(resw, "Invalid attachment", http.StatusBadRequest)
+					return
+				}
+
+				create_message.Attachments = append(create_message.Attachments, Attachment{
+					T:        attachment_type,
+					Url:      url,
+					Filename: filename,
+				})
+			}
+			// FIXME: Here MUST be all supported attachment types
+		default:
+			{
+				http.Error(resw, "Invalid/not implemented attachment", http.StatusBadRequest)
+				return
+			}
+		}
+	}
+
 	create_message.Timestamp = time.Now().Unix()
 
 	if len(create_message.Attachments) == 0 {
-		resw.WriteHeader(http.StatusBadRequest)
-		resw.Write([]byte("No objects to save"))
+		http.Error(resw, "Please, attach file to upload", http.StatusBadRequest)
 
 		return
 	}
 
-	payload, _ := json.Marshal(create_message) // XXX: i think you must to check err
+	payload, err := json.Marshal(create_message)
+
+	if err != nil {
+		http.Error(resw, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	//XXX: ------------- TESTING BLOCK -----------------------
+	resw.WriteHeader(http.StatusOK)
+	resw.Write([]byte("Accepted\n"))
+
+	pretty_payload, _ := json.MarshalIndent(create_message, "json >>", "  ")
+
+	log.Printf("Apporacing to send: \njson >>%s\n", string(pretty_payload))
+
+	return
+	//XXX: ------- ^^^ REMOVE AFTER TESTING ^^^-----------------
+
+	// Database fetch
 
 	client := http.Client{
 		Timeout: 200 * time.Millisecond,
@@ -41,9 +141,7 @@ func handle_create(resw http.ResponseWriter, req *http.Request, msg *schemes.Mes
 	newreq, err := http.NewRequest("POST", "http://database.db/branches/master", bytes.NewReader(payload))
 
 	if err != nil {
-		resw.WriteHeader(http.StatusBadRequest)
-		resw.Write([]byte("Invalid packet structure"))
-
+		http.Error(resw, "Invalid packet structure", http.StatusBadRequest)
 		return
 	}
 
@@ -52,9 +150,7 @@ func handle_create(resw http.ResponseWriter, req *http.Request, msg *schemes.Mes
 	if err != nil {
 		log.Fatalf("Failed to connect to database")
 
-		resw.WriteHeader(http.StatusInternalServerError)
-		resw.Write([]byte("Internal server error"))
-
+		http.Error(resw, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -68,17 +164,13 @@ func handle_create(resw http.ResponseWriter, req *http.Request, msg *schemes.Mes
 		}
 	case 400:
 		{
-			resw.WriteHeader(http.StatusBadRequest)
-			resw.Write([]byte("Failed to upload file"))
-
+			http.Error(resw, "Failed to upload file", http.StatusBadRequest)
 			return
 		}
 
 	default:
 		{
-			resw.WriteHeader(http.StatusInternalServerError)
-			resw.Write([]byte("Unexpected exception"))
-
+			http.Error(resw, "Unexpected exception", http.StatusInternalServerError)
 			return
 		}
 	}

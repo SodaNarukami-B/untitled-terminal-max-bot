@@ -7,8 +7,8 @@ import (
 )
 
 func handle_echo(resw http.ResponseWriter, req *http.Request, msg *schemes.Message) {
-	resw.WriteHeader(http.StatusOK)
-
 	comm, _ := parse_command(msg.Body.Text)
+
+	resw.WriteHeader(http.StatusOK)
 	resw.Write([]byte(comm.raw_args))
 }
