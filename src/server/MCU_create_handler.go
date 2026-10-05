@@ -1,6 +1,4 @@
-// draft
-
-package main
+package server
 
 import (
 	"bytes"
@@ -17,6 +15,7 @@ type Attachment struct {
 	T        string `json:"type"`
 	Url      string `json:"url"`
 	Filename string `json:"filename"`
+	Size     int64  `json:"size"`
 }
 
 type CreateMessage struct {
@@ -29,7 +28,7 @@ var TYPE_HANDLERS = map[string]func(string){
 	"file": func(t string) {},
 }
 
-func handle_create(resw http.ResponseWriter, req *http.Request, msg *schemes.Message) {
+func MCU_create_handler(resw http.ResponseWriter, req *http.Request, msg *schemes.Message, command Command) {
 
 	var create_message CreateMessage
 
@@ -91,10 +90,20 @@ func handle_create(resw http.ResponseWriter, req *http.Request, msg *schemes.Mes
 					return
 				}
 
+				sizeRaw, exists := Item["size"].(float64)
+				if !exists {
+					http.Error(resw, "Invalid attachment", http.StatusBadRequest)
+					log.Println("Yap")
+					return
+				}
+
+				size := int64(sizeRaw)
+
 				create_message.Attachments = append(create_message.Attachments, Attachment{
 					T:        attachment_type,
 					Url:      url,
 					Filename: filename,
+					Size:     size,
 				})
 			}
 			// FIXME: Here MUST be all supported attachment types
@@ -121,7 +130,7 @@ func handle_create(resw http.ResponseWriter, req *http.Request, msg *schemes.Mes
 		return
 	}
 
-	//XXX: ------------- TESTING BLOCK -----------------------
+	//XXX: ------------- TESTING BREAKPOINT -----------------------
 	resw.WriteHeader(http.StatusOK)
 	resw.Write([]byte("Accepted\n"))
 
@@ -167,7 +176,11 @@ func handle_create(resw http.ResponseWriter, req *http.Request, msg *schemes.Mes
 			http.Error(resw, "Failed to upload file", http.StatusBadRequest)
 			return
 		}
-
+	case 500:
+		{
+			http.Error(resw, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
 	default:
 		{
 			http.Error(resw, "Unexpected exception", http.StatusInternalServerError)
