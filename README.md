@@ -13,3 +13,6 @@ Main package provides easy starting 1 of 3 modes:
 - Server: Bot, that using http instead MAX-API.
 - Filestorage: Mini file storage, created for database is not implemented.
 
+```
+go run /path/to/dir-called-master -mode server|client|filestorage
+```
