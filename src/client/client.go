@@ -112,7 +112,7 @@ func message_client() {
 			continue
 		}
 
-		req, err := http.NewRequest(http.MethodPost, "http://192.168.1.2:60001/webhook", bytes.NewReader(json_data))
+		req, err := http.NewRequest(http.MethodPost, "http://192.168.1.10:60001/webhook", bytes.NewReader(json_data))
 		if err != nil {
 			fmt.Printf(":: Failed to initialize request - %v\n", err)
 			continue
