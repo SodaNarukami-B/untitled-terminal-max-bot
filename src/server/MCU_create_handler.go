@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -11,180 +12,166 @@ import (
 	schemes "github.com/max-messenger/max-bot-api-client-go/schemes"
 )
 
-type Attachment struct {
-	T        string `json:"type"`
-	Url      string `json:"url"`
-	Filename string `json:"filename"`
-	Size     int64  `json:"size"`
-}
+func MCU_create(resw http.ResponseWriter, msg *schemes.Message, com Command, dbClient *http.Client) {
 
-type CreateMessage struct {
-	User        schemes.User `json:"user"`
-	Attachments []Attachment `json:"attachments"`
-	Timestamp   int64        `json:"timestamp"`
-}
+	var serverMessage MCU_ServerMessage
 
-var TYPE_HANDLERS = map[string]func(string){
-	"file": func(t string) {},
-}
+	serverMessage.User = msg.Sender
 
-func MCU_create_handler(resw http.ResponseWriter, req *http.Request, msg *schemes.Message, command Command) {
-
-	var create_message CreateMessage
-
-	// user
-	create_message.User = msg.Sender
-
-	// attachments
 	for _, rawItem := range msg.Body.RawAttachments {
-		var Item map[string]any
-
-		err := json.Unmarshal(rawItem, &Item)
-
+		var item map[string]any
+		err := json.Unmarshal(rawItem, &item)
 		if err != nil {
-			http.Error(resw, "Invalid attachment", http.StatusBadRequest)
+			httpError(resw, "Bad Attachment (marshal)", http.StatusBadRequest)
 			return
 		}
 
-		attachment_type, exists := Item["type"].(string)
-		if !exists {
-			http.Error(resw, "Invalid attachment", http.StatusBadRequest)
+		var at_type string
+		var payload map[string]any
+		var payload_host string
+		var payload_token string
+		var at_url string
+		var at_filename string
+		var at_size int64
+
+		var ex bool
+
+		if at_type, ex = item["type"].(string); !ex {
+			httpError(resw, "Bad Attachment (type)", http.StatusBadRequest)
 			return
 		}
 
-		payload, exists := Item["payload"].(map[string]any)
-		if !exists {
-			http.Error(resw, "Invalid attachment", http.StatusBadRequest)
+		if payload, ex = item["payload"].(map[string]any); !ex {
+			httpError(resw, "Bad Attachment (payload)", http.StatusBadRequest)
 			return
 		}
 
-		// URL
-		// 1
-		host, exists := payload["host"].(string)
-		if !exists {
-			http.Error(resw, "Invalid attachment", http.StatusBadRequest)
+		if payload_host, ex = payload["host"].(string); !ex {
+			httpError(resw, "Bad Attachment (host)", http.StatusBadRequest)
 			return
 		}
 
-		// 2
-		token, exists := payload["token"].(string)
-		if !exists {
-			http.Error(resw, "Invalid attachment", http.StatusBadRequest)
+		if payload_token, ex = payload["token"].(string); !ex {
+			httpError(resw, "Bad Attachment (token)", http.StatusBadRequest)
 			return
 		}
 
-		// 1 + 2
-
-		url, err := url.JoinPath(host, token)
-		if err != nil {
-			http.Error(resw, "Invalid source", http.StatusBadRequest)
-			return
-		}
-
-		switch schemes.AttachmentType(attachment_type) {
+		switch schemes.AttachmentType(at_type) {
 		case schemes.AttachmentFile:
-			{
-				filename, exists := Item["filename"].(string)
-				if !exists {
-					http.Error(resw, "Invalid attachment", http.StatusBadRequest)
-					return
-				}
-
-				sizeRaw, exists := Item["size"].(float64)
-				if !exists {
-					http.Error(resw, "Invalid attachment", http.StatusBadRequest)
-					log.Println("Yap")
-					return
-				}
-
-				size := int64(sizeRaw)
-
-				create_message.Attachments = append(create_message.Attachments, Attachment{
-					T:        attachment_type,
-					Url:      url,
-					Filename: filename,
-					Size:     size,
-				})
-			}
-			// FIXME: Here MUST be all supported attachment types
-		default:
-			{
-				http.Error(resw, "Invalid/not implemented attachment", http.StatusBadRequest)
+			if at_filename, ex = item["filename"].(string); !ex {
+				httpError(resw, "Bad Attachment (filename)", http.StatusBadRequest)
 				return
 			}
+
+			if at_sizeRaw, ex := item["size"].(float64); !ex {
+				httpError(resw, "Bad Attachment (size)", http.StatusBadRequest)
+				return
+			} else {
+				at_size = int64(at_sizeRaw)
+			}
+
+		default:
+			httpError(resw, "Bad Attachment (file type)", http.StatusBadRequest)
+			return
 		}
+
+		at_url, err = url.JoinPath(payload_host, payload_token)
+		if err != nil {
+			httpError(resw, "Bad Attachment (url compare)", http.StatusBadRequest)
+			return
+		}
+
+		serverMessage.Attachments = append(serverMessage.Attachments, Attachment{
+			T:        at_type,
+			Url:      at_url,
+			Filename: at_filename,
+			Size:     at_size,
+		})
 	}
 
-	create_message.Timestamp = time.Now().Unix()
+	serverMessage.Timestamp = time.Now().Unix()
 
-	if len(create_message.Attachments) == 0 {
-		http.Error(resw, "Please, attach file to upload", http.StatusBadRequest)
-
+	if len(serverMessage.Attachments) == 0 {
+		httpError(resw, "No Attachments", http.StatusBadRequest)
 		return
 	}
 
-	payload, err := json.Marshal(create_message)
+	reqPayload, err := json.Marshal(serverMessage)
 
 	if err != nil {
-		http.Error(resw, "Internal server error", http.StatusInternalServerError)
+		httpError(resw, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
-	//XXX: ------------- TESTING BREAKPOINT -----------------------
-	resw.WriteHeader(http.StatusOK)
-	resw.Write([]byte("Accepted\n"))
+	dbReq, err := http.NewRequest(http.MethodPost, "http://127.0.0.1:60002/repo", bytes.NewReader(reqPayload))
 
-	pretty_payload, _ := json.MarshalIndent(create_message, "json >>", "  ")
-
-	log.Printf("Apporacing to send: \njson >>%s\n", string(pretty_payload))
-
-	return
-	//XXX: ------- ^^^ REMOVE AFTER TESTING ^^^-----------------
-
-	// Database fetch
-
-	client := http.Client{
-		Timeout: 200 * time.Millisecond,
-	}
-
-	newreq, err := http.NewRequest("POST", "http://database.db/branches/master", bytes.NewReader(payload))
+	dbReq.Header.Add("Content-Type", "application/json")
+	dbReq.Header.Add("Content-Length", string(len(reqPayload)))
 
 	if err != nil {
-		http.Error(resw, "Invalid packet structure", http.StatusBadRequest)
+		httpError(resw, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
-	resp, err := client.Do(newreq)
+	res, err := dbClient.Do(dbReq)
 
+	// XXX: make repeating with exponentaly increasing delay
 	if err != nil {
-		log.Fatalf("Failed to connect to database")
+		log.Printf("Failed to connect to database (%s) [%v]\n", "http://127.0.0.1:60002/repo", err.Error())
 
-		http.Error(resw, "Internal server error", http.StatusInternalServerError)
+		httpError(resw, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
 
-	switch resp.StatusCode {
+	switch res.StatusCode {
 	case 201:
-		{
-			resw.WriteHeader(http.StatusCreated)
-			resw.Write([]byte("File updloaded"))
+		resw.WriteHeader(http.StatusCreated)
+		resw.Write([]byte("Created"))
 
-			return
-		}
+		log.Printf("CREATE > database\t[ CREATED ]\n")
+
+		return
 	case 400:
-		{
-			http.Error(resw, "Failed to upload file", http.StatusBadRequest)
+		rawRes, err := io.ReadAll(res.Body)
+		if err != nil {
+			httpError(resw, "Bad Gateway", http.StatusBadGateway)
+			log.Printf("CREATE > database\t[ 502 ]\n")
 			return
 		}
+
+		var jsonRes map[string]string
+		err = json.Unmarshal(rawRes, &jsonRes)
+
+		if err != nil {
+			httpError(resw, "Bad Gateway", http.StatusBadGateway)
+			log.Printf("CREATE > database\t[ 502 ]\n")
+			return
+		}
+
+		var details string
+		var ex bool
+
+		if details, ex = jsonRes["details"]; !ex {
+			httpError(resw, "Bad Gateway", http.StatusBadGateway)
+			log.Printf("CREATE > database\t[ 502 ]\n")
+			return
+		}
+
+		resw.WriteHeader(http.StatusBadRequest)
+		resw.Write([]byte(details))
+
+		log.Printf("CREATE > database\t[ 400 ]\n")
+
+		return
+
 	case 500:
-		{
-			http.Error(resw, "Internal Server Error", http.StatusInternalServerError)
-			return
-		}
+		httpError(resw, "Internal Server Error", http.StatusInternalServerError)
+		log.Printf("CREATE > database\t[ 500 ]\n")
+
+		return
 	default:
-		{
-			http.Error(resw, "Unexpected exception", http.StatusInternalServerError)
-			return
-		}
+		httpError(resw, "Bad Gateway", http.StatusBadGateway)
+		log.Printf("CREATE > database\t[ 502 ]\n")
+		return
 	}
 }

@@ -16,15 +16,15 @@ func main() {
 	switch *mode {
 	case "server":
 		{
-			server.Run() // FIXME: REVIEW, REWORK NEDDED
+			server.Run()
 		}
 	case "client":
 		{
-			client.Run() // FIXME: REVIEW, REWORK NEDDED
+			client.Run()
 		}
 	case "filestorage":
 		{
-			filestorage.Run() // FIXME: REVIEW, REWORK NEDDED
+			filestorage.Run()
 		}
 
 	default:

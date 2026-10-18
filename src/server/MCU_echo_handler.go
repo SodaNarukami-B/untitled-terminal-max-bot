@@ -6,7 +6,7 @@ import (
 	schemes "github.com/max-messenger/max-bot-api-client-go/schemes"
 )
 
-func MCU_echo_handler(resw http.ResponseWriter, req *http.Request, msg *schemes.Message, command Command) {
+func MCU_echo(resw http.ResponseWriter, m *schemes.Message, command Command, _ *http.Client) {
 	resw.WriteHeader(http.StatusOK)
-	resw.Write([]byte(command.Raw_args))
+	resw.Write([]byte(command.RawArgs))
 }

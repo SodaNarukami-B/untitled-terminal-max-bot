@@ -86,24 +86,23 @@ func message_client() {
 		command, err := parse_command(text)
 
 		if err != nil {
-			fmt.Printf(":: Failed to parse command - %v\n", err)
-			continue
-		}
+			msg.Message.Body.Text = text
+		} else {
+			if command.Command == "quit" || command.Command == "exit" {
+				break
+			}
 
-		if command.Command == "quit" || command.Command == "exit" {
-			break
-		}
+			handler, exists := Message_client_commands[command.Command]
 
-		handler, exists := Message_client_commands[command.Command]
-
-		if exists {
-			err := handler(&msg.Message, command.Raw_args)
-			if err != nil {
-				fmt.Printf(":: Failed to handle supported command '%s', sending as text ( %v )\n", command.Command, err)
+			if exists {
+				err := handler(&msg.Message, command.Raw_args)
+				if err != nil {
+					fmt.Printf(":: Failed to handle supported command '%s', sending as text ( %v )\n", command.Command, err)
+					msg.Message.Body.Text = text
+				}
+			} else {
 				msg.Message.Body.Text = text
 			}
-		} else {
-			msg.Message.Body.Text = text
 		}
 
 		json_data, err := json.Marshal(msg)
@@ -117,6 +116,9 @@ func message_client() {
 			fmt.Printf(":: Failed to initialize request - %v\n", err)
 			continue
 		}
+
+		req.Header.Add("Content-Type", "application/json")
+		req.Header.Add("Content-Length", string(len(string(json_data))))
 
 		resp, err := client.Do(req)
 
@@ -133,7 +135,7 @@ func message_client() {
 			continue
 		}
 
-		if string(body_bytes)[len(body_bytes)-1] == '\n' {
+		if len(string(body_bytes)) >= 2 && string(body_bytes)[len(body_bytes)-1] == '\n' {
 			body_bytes = body_bytes[:len(body_bytes)-1]
 		}
 
